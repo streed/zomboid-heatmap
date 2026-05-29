@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Zomboid Event Heatmap</title>
+    <link rel="stylesheet" href="/vendor/leaflet.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <aside id="panel">
+      <header>
+        <span class="dot"></span>
+        <h1>Event Heatmap</h1>
+        <button id="collapse" title="Collapse panel" aria-label="Collapse panel">–</button>
+      </header>
+
+      <div id="panel-body">
+        <section>
+          <h2>Categories</h2>
+          <div id="categories" class="categories"></div>
+        </section>
+
+        <section id="time">
+          <h2>Time range</h2>
+          <div id="time-label" class="muted">all</div>
+          <input id="time-start" type="range" />
+          <input id="time-end" type="range" />
+        </section>
+
+        <section>
+          <h2>Intensity radius</h2>
+          <input id="radius" type="range" min="6" max="60" value="25" />
+        </section>
+
+        <footer>
+          <span id="stat" class="muted"></span>
+        </footer>
+      </div>
+    </aside>
+
+    <div id="error"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

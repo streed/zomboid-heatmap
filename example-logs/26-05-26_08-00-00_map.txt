@@ -1,0 +1,6 @@
+[26-05-26 08:01:12.000] 76561190000000001 "Alice" built IsoWall (walls_exterior_house_01_0) at 10840,9220,0.
+[26-05-26 08:03:45.120] 76561190000000002 "Bob" taken IsoGenerator (appliances_misc_01_0) at 10876,9265,0.
+[26-05-26 08:05:02.300] 76561190000000001 "Alice" placed IsoWindow (walls_windows_01_4) at 10841,9221,0.
+[26-05-26 08:12:30.000] 76561190000000003 "Carol" dropped Base.Hammer at 11620,6790,0.
+[26-05-26 08:20:11.000] 76561190000000003 "Carol" taken IsoFridge (appliances_refrigeration_01_2) at 11631,6802,0.
+[26-05-26 08:44:55.000] 76561190000000002 "Bob" built IsoDoor (fixtures_doors_01_0) at 10878,9266,0.

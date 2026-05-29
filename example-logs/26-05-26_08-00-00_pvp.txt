@@ -1,0 +1,2 @@
+[26-05-26 08:15:29.174] user Bob (10880,9270,0) hit user Alice (10881,9270,0) with Base.BaseballBat damage 2.100.
+[26-05-26 08:16:02.000] user Alice (10881,9270,0) hit user Bob (10880,9270,0) with Base.Hammer damage 1.350.
