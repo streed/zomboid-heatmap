@@ -1,0 +1,47 @@
+# systemd unit for zomboid-heatmap.
+#
+# Install:   sudo cp deploy/zomboid-heatmap.service /etc/systemd/system/
+#            sudo systemctl daemon-reload
+#            sudo systemctl enable --now zomboid-heatmap
+# Logs:      sudo journalctl -u zomboid-heatmap -f
+#
+# Edit `User=`, `WorkingDirectory=`, `EnvironmentFile=`, `ReadWritePaths=`, and
+# the ExecStart path to bun to match your install.
+
+[Unit]
+Description=Zomboid event heatmap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as the user that owns the Zomboid server / Logs directory.
+User=steam
+Group=steam
+
+WorkingDirectory=/opt/zomboid-heatmap
+EnvironmentFile=/opt/zomboid-heatmap/.env
+
+# `serve` runs the prebuilt server. Build (`bun run build`) is a deploy-time
+# step — NOT done here, so the sandbox below can stay strict (no write to dist/)
+# and a broken build can't mask itself as a failed start.
+ExecStart=/usr/local/bin/bun run serve
+
+Restart=on-failure
+RestartSec=5
+
+# Sandbox hardening. Only `data/` (tile cache + parse state) is writable.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/zomboid-heatmap/data
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

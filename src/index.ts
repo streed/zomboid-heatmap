@@ -69,7 +69,7 @@ const server = createServer({ config, aggregator, tiles, state });
 setInterval(refresh, config.refreshMinutes * 60_000);
 
 console.log(
-  `zomboid-heatmap listening on http://localhost:${server.port}\n` +
+  `zomboid-heatmap listening on http://${config.hostname}:${server.port}\n` +
     `  logs:     ${config.logsDir}\n` +
     `  build:    ${config.build} (${config.projection} projection)\n` +
     `  tiles:    ${config.tileUpstream}maps/${config.mapDesc}/\n` +

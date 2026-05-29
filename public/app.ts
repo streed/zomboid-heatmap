@@ -78,7 +78,7 @@ async function refreshHeat(fitToData = false): Promise<void> {
   if (to !== undefined) q.set("to", String(to));
 
   const { points } = await getJSON<{ binSize: number; points: HeatPoint[] }>(
-    `/api/heatmap?${q}`,
+    `api/heatmap?${q}`,
   );
 
   let maxWeight = 1;
@@ -163,7 +163,7 @@ function buildRadiusControl(): void {
 // ---- Bootstrap -------------------------------------------------------------
 
 async function main(): Promise<void> {
-  meta = await getJSON<MapMeta>("/api/meta");
+  meta = await getJSON<MapMeta>("api/meta");
   if ((meta as unknown as { error?: string }).error) {
     el("error").textContent = `Map tiles unavailable: ${(meta as any).error}`;
     el("error").style.display = "block";
@@ -200,7 +200,7 @@ async function main(): Promise<void> {
   let lastSeen = meta.lastUpdated;
   setInterval(async () => {
     try {
-      const fresh = await getJSON<MapMeta>("/api/meta");
+      const fresh = await getJSON<MapMeta>("api/meta");
       if (fresh.lastUpdated !== lastSeen) {
         lastSeen = fresh.lastUpdated;
         meta = fresh;

@@ -69,7 +69,7 @@ export function createServer(deps: ServerDeps) {
       overlap: dzi.overlap,
       maxLevel: dzi.maxLevel,
       format: dzi.format,
-      tileUrlTemplate: `/tiles/${tiles.tilesDir}/{z}/{x}_{y}.${dzi.format}`,
+      tileUrlTemplate: `tiles/${tiles.tilesDir}/{z}/{x}_{y}.${dzi.format}`,
       projection: await buildProjection(dzi.width),
       available: aggregator.categoryCounts(),
       eventsFrom: range?.from ?? null,
@@ -79,6 +79,7 @@ export function createServer(deps: ServerDeps) {
   }
 
   return Bun.serve({
+    hostname: config.hostname,
     port: config.port,
     async fetch(req): Promise<Response> {
       const url = new URL(req.url);

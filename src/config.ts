@@ -43,6 +43,8 @@ export const config = {
   /** Grid bin size in tiles for aggregation. Larger = coarser + smaller payload. */
   binSize: num("BIN_SIZE", 10),
 
+  /** Bind address. Set to "127.0.0.1" when behind a reverse proxy (recommended). */
+  hostname: str("HOSTNAME", "0.0.0.0"),
   port: num("PORT", 8080),
   /** CSP `frame-ancestors` value controlling who may embed the iframe. */
   frameAncestors: str("FRAME_ANCESTORS", "*"),

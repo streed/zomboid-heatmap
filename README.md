@@ -94,6 +94,86 @@ LOGS_DIR=./example-logs bun run start
 
 ---
 
+## Deploying (systemd + nginx)
+
+For a permanent install on the same box as your PZ server, with TLS via your
+existing nginx config. Concrete files live in `deploy/`.
+
+### 1. Lay out the code
+
+```sh
+sudo mkdir -p /opt/zomboid-heatmap
+sudo chown <pz-user>:<pz-user> /opt/zomboid-heatmap   # same user that runs the PZ server
+# copy this repo into /opt/zomboid-heatmap (rsync, git clone, sshfs, etc.)
+cd /opt/zomboid-heatmap
+bun install
+cp .env.example .env
+$EDITOR .env                  # at minimum: LOGS_DIR, HOSTNAME=127.0.0.1 (behind nginx)
+bun run build                 # produces dist/app.js (deploy-time, not at service start)
+```
+
+### 2. systemd service
+
+```sh
+sudo cp deploy/zomboid-heatmap.service /etc/systemd/system/
+sudo $EDITOR /etc/systemd/system/zomboid-heatmap.service   # set User=, paths, bun location
+sudo systemctl daemon-reload
+sudo systemctl enable --now zomboid-heatmap
+sudo journalctl -u zomboid-heatmap -n 20 --no-pager
+```
+
+You should see `listening on http://127.0.0.1:8080`. The unit uses `bun run
+serve` (no rebuild at start) and sandboxes the process so only `data/` is
+writable. After future code updates, run `bun run build` then
+`sudo systemctl restart zomboid-heatmap`.
+
+### 3. nginx — add `/heatmap` to your existing site
+
+Open the nginx config for the domain (commonly under
+`/etc/nginx/sites-enabled/` or `/etc/nginx/conf.d/`) and paste the contents of
+`deploy/nginx-heatmap.conf` **inside the existing `server { ... }` block** —
+don't add a new `server { }`. Then:
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Visit `https://<your-host>/heatmap/`.
+
+### 4. Verify and lock down port 8080
+
+```sh
+# App should be listening on 127.0.0.1 only (not 0.0.0.0 / *)
+sudo ss -tlnp | grep ':8080'
+
+# Backend serves a relative tile URL template (no leading /)
+curl -s http://127.0.0.1:8080/api/meta \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["tileUrlTemplate"])'
+# expected: tiles/maps/<MAP_DESC>/map_files/{z}/{x}_{y}.<format>
+
+# Same thing through nginx
+curl -s https://<your-host>/heatmap/api/meta \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["tileUrlTemplate"])'
+```
+
+Optional defense-in-depth firewall rule (no-op when `HOSTNAME=127.0.0.1`, but
+worth having so 8080 stays closed regardless of binding):
+
+```sh
+sudo ufw deny 8080/tcp        # or your cloud security group / nftables / iptables
+```
+
+### Embed it
+
+```html
+<iframe src="https://<your-host>/heatmap/?cat=pvp" width="900" height="600" style="border:0"></iframe>
+```
+
+Tighten `FRAME_ANCESTORS` in `.env` to the origin you actually embed from, then
+`sudo systemctl restart zomboid-heatmap`.
+
+---
+
 ## Configuration
 
 All options are environment variables (see `.env.example`). Defaults in **bold**.
