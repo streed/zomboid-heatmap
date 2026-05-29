@@ -4,3 +4,4 @@ data/cache/
 data/state.json
 .env
 *.log
+server/
