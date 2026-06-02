@@ -7,6 +7,7 @@
   "scripts": {
     "build": "bun build ./public/app.ts --outdir ./dist --target browser --minify",
     "serve": "bun run ./src/index.ts",
+    "backfill": "bun run ./src/index.ts --backfill",
     "start": "bun run build && bun run ./src/index.ts",
     "dev": "bun run build && bun --watch run ./src/index.ts",
     "test": "bun test"

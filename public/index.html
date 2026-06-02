@@ -23,6 +23,23 @@
           <div id="categories" class="categories"></div>
         </section>
 
+        <section>
+          <h2>Filter by player</h2>
+          <select id="player-filter" class="player-filter">
+            <option value="">All players</option>
+          </select>
+        </section>
+
+        <section id="players-section">
+          <h2>
+            <label class="players-toggle">
+              <input id="show-players" type="checkbox" checked />
+              Live players <span id="players-count" class="muted"></span>
+            </label>
+          </h2>
+          <div id="players" class="players"></div>
+        </section>
+
         <section id="time">
           <h2>Time range</h2>
           <div id="time-label" class="muted">all</div>

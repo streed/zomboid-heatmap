@@ -24,6 +24,52 @@ export interface GameEvent {
   x: number | null;
   y: number | null;
   z: number | null;
+  /** Rich per-player metrics, only present on `_player.txt` connect/tick lines. */
+  details?: PlayerDetails;
+}
+
+/** Metrics carried by `_player.txt` connect/tick lines (perks, stats, health). */
+export interface PlayerDetails {
+  profession: string | null;
+  kills: number | null;
+  /** Survived in-game hours. */
+  hours: number | null;
+  /** 0–100 body health. */
+  health: number | null;
+  infected: boolean | null;
+  /** Skill -> level map, e.g. { Axe: 5, Strength: 10 }. */
+  perks: Record<string, number> | null;
+  traits: string[] | null;
+}
+
+/** A tracked player's latest known position + metrics, served to the frontend. */
+export interface PlayerInfo extends PlayerDetails {
+  steamid: string;
+  name: string | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+  /** True when the player is connected (last action wasn't a disconnect) and
+   *  has been seen recently relative to the newest tick. */
+  online: boolean;
+  /** The last log action seen for this player (connected/tick/disconnected/…). */
+  lastAction: string;
+  /** Epoch ms of first and most recent log line mentioning this player. */
+  firstSeen: number;
+  lastSeen: number;
+}
+
+/** A single player death location, in game world tile coordinates. */
+export interface DeathInfo {
+  steamid: string;
+  name: string | null;
+  x: number;
+  y: number;
+  z: number | null;
+  /** Epoch ms of the death. */
+  ts: number;
+  /** In-game hours survived before this death, when the log records it. */
+  hours: number | null;
 }
 
 /** A weighted point for the heatmap, in game world tile coordinates. */

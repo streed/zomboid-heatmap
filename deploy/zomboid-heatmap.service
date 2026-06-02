@@ -35,7 +35,14 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/opt/zomboid-heatmap/data
-ProtectHome=true
+
+# The Zomboid logs live under the steam user's home (LOGS_DIR, e.g.
+# /home/steam/Zomboid/Logs). `ProtectHome=true` would hide them entirely and
+# the parser would silently ingest nothing — keep home readable, not hidden.
+# If you prefer full isolation, swap this for `ProtectHome=tmpfs` plus a
+# `BindReadOnlyPaths=` for the exact Logs directory.
+ProtectHome=read-only
+ReadOnlyPaths=/home/steam/Zomboid/Logs
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

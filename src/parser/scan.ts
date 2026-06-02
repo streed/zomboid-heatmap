@@ -48,6 +48,11 @@ export async function scanLogs(
   const offsets: FileOffsets = {};
 
   for (const path of await findLogFiles(logsDir)) {
+    // Resolve the category up front so non-spatial logs (item/craft/chat/debug
+    // /…) are skipped entirely — we never read or store an offset for them.
+    const category = categoryFromFilename(path);
+    if (category === null) continue;
+
     const file = Bun.file(path);
     const size = file.size;
     let offset = prior[path] ?? 0;
@@ -66,7 +71,6 @@ export async function scanLogs(
     }
 
     const complete = chunk.slice(0, lastNl + 1);
-    const category = categoryFromFilename(path);
     for (const line of complete.split("\n")) {
       if (!line) continue;
       const event = parseLine(line, category);

@@ -4,8 +4,23 @@ import { getBuildPreset, type ProjectionMode } from "./builds.ts";
 // Centralized, validated configuration loaded from the environment. Bun loads
 // `.env` automatically, so no dotenv dependency is needed.
 
+/**
+ * Read an env var and clean it up. systemd's `EnvironmentFile` keeps inline
+ * `# comments` literally (it only honors whole-line comments), so a value like
+ * `REFRESH_MINUTES=1   # the timer` would otherwise arrive as the whole string.
+ * We trim, strip an unquoted trailing ` # comment`, and unwrap matching quotes.
+ */
+function envValue(name: string): string | undefined {
+  let v = process.env[name];
+  if (v === undefined) return undefined;
+  v = v.trim().replace(/\s+#.*$/, "").trim();
+  const quoted = /^(["'])(.*)\1$/.exec(v);
+  if (quoted) v = quoted[2]!;
+  return v;
+}
+
 function num(name: string, fallback: number): number {
-  const raw = process.env[name];
+  const raw = envValue(name);
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n)) throw new Error(`${name} must be a number, got "${raw}"`);
@@ -13,7 +28,7 @@ function num(name: string, fallback: number): number {
 }
 
 function str(name: string, fallback: string): string {
-  const raw = process.env[name];
+  const raw = envValue(name);
   return raw === undefined || raw === "" ? fallback : raw;
 }
 
@@ -52,6 +67,13 @@ export const config = {
   dataDir,
   cacheDir: resolve(dataDir, "cache", "tiles"),
   stateFile: resolve(dataDir, "state.json"),
+  /** SQLite database holding per-player metrics + latest known position. */
+  dbFile: resolve(dataDir, "players.db"),
+
+  /** A player drops off the live map this long (wall-clock) after their last
+   *  log line, even without an explicit disconnect. Assumes log timestamps are
+   *  roughly in sync with the host clock (run the PZ server in UTC). */
+  playerStaleMs: num("PLAYER_STALE_MINUTES", 30) * 60_000,
 } as const;
 
 export type Config = typeof config;

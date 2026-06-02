@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Aggregator } from "./aggregate.ts";
 import type { Config } from "./config.ts";
+import type { PlayerTracker } from "./players.ts";
 import type { TileProxy } from "./tiles.ts";
 import type { MapMeta, Projection } from "./types.ts";
 
@@ -15,6 +16,7 @@ export interface ServerState {
 export interface ServerDeps {
   config: Config;
   aggregator: Aggregator;
+  players: PlayerTracker;
   tiles: TileProxy;
   state: ServerState;
 }
@@ -38,7 +40,7 @@ function json(data: unknown, headers: HeadersInit): Response {
 }
 
 export function createServer(deps: ServerDeps) {
-  const { config, aggregator, tiles, state } = deps;
+  const { config, aggregator, players, tiles, state } = deps;
 
   // Applied to every response so the app can be embedded per FRAME_ANCESTORS.
   // We intentionally do NOT send X-Frame-Options (it can't express an allowlist).
@@ -111,19 +113,50 @@ export function createServer(deps: ServerDeps) {
         }
       }
 
-      // Heatmap points, filtered by category list + optional time range.
+      // Heatmap points, filtered by category list + optional time range. When a
+      // `player` (steamid) is given, the points come from that player's tracked
+      // position history instead of the all-players aggregate.
       if (path === "/api/heatmap") {
         const cat = url.searchParams.get("cat");
         const categories = cat ? cat.split(",").filter(Boolean) : undefined;
         const fromRaw = url.searchParams.get("from");
         const toRaw = url.searchParams.get("to");
-        const points = aggregator.query({
+        const player = url.searchParams.get("player");
+        const opts = {
           categories,
           from: fromRaw ? Number(fromRaw) : undefined,
           to: toRaw ? Number(toRaw) : undefined,
-        });
+        };
+        const points = player ? players.heatmap(player, opts) : aggregator.query(opts);
         return json(
           { binSize: config.binSize, points },
+          { ...baseHeaders, "cache-control": "no-cache" },
+        );
+      }
+
+      // Live players: latest known position + metrics per player. Defaults to
+      // currently-online players (for the map); `?all=1` returns everyone seen.
+      if (path === "/api/players") {
+        const all = url.searchParams.get("all") === "1";
+        return json(
+          { players: players.list({ onlineOnly: !all }) },
+          { ...baseHeaders, "cache-control": "no-cache" },
+        );
+      }
+
+      // Player death locations, optionally filtered by player + time range.
+      if (path === "/api/deaths") {
+        const player = url.searchParams.get("player") ?? undefined;
+        const fromRaw = url.searchParams.get("from");
+        const toRaw = url.searchParams.get("to");
+        return json(
+          {
+            deaths: players.deaths({
+              player,
+              from: fromRaw ? Number(fromRaw) : undefined,
+              to: toRaw ? Number(toRaw) : undefined,
+            }),
+          },
           { ...baseHeaders, "cache-control": "no-cache" },
         );
       }

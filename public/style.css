@@ -132,6 +132,74 @@ input[type="range"] {
   margin: 4px 0;
 }
 
+/* Live players panel: a toggle in the heading + a compact roster. */
+.players-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.players-toggle input {
+  accent-color: var(--accent);
+}
+.player-filter {
+  width: 100%;
+  background: #161c25;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 13px;
+  /* Render the native option list dark instead of the OS default white. */
+  color-scheme: dark;
+}
+.player-filter option {
+  background: #161c25;
+  color: var(--text);
+}
+.players {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.player-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+.player-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+.player-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-meta {
+  flex: 0 0 auto;
+}
+
+/* Death markers (shown when filtered to one player). */
+.death-marker {
+  color: #ff3b30;
+  font-size: 16px;
+  line-height: 20px;
+  text-align: center;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  cursor: default;
+}
+
 .muted {
   color: var(--muted);
   font-size: 12px;

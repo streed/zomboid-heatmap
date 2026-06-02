@@ -1,5 +1,47 @@
-import type { Category, GameEvent } from "../types.ts";
+import type { Category, GameEvent, PlayerDetails } from "../types.ts";
 import { ACTOR_RE, COORD_RE, PVP_RE, TS_RE } from "./patterns.ts";
+
+// `_player.txt` connect/tick lines append flat JSON blobs:
+//   ... perks={...} traits=[...] stats={"profession":..,"kills":..,"hours":..}
+//       health={"health":..,"infected":..} safehouse owner=(..) (x,y,z).
+// None of these objects nest, so a `{...}` / `[...]` slice is safe to JSON.parse.
+// PerkLog bracketed line: [steamid][name][x,y,z][EventType][Hours Survived: N].
+const BRACKET_RE = /^\[(\d{6,})\]\[([^\]]*)\]\[(-?\d+),(-?\d+),(-?\d+)\]\[([^\]]+)\]/;
+
+const PERKS_RE = /perks=(\{[^}]*\})/;
+const TRAITS_RE = /traits=(\[[^\]]*\])/;
+const STATS_RE = /stats=(\{[^}]*\})/;
+const HEALTH_RE = /health=(\{[^}]*\})/;
+
+function jsonOr<T>(re: RegExp, s: string, fallback: T): T {
+  const m = re.exec(s);
+  if (!m) return fallback;
+  try {
+    return JSON.parse(m[1]!) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Pull perks/traits/stats/health out of a player line's remainder, if present. */
+function parsePlayerDetails(rest: string): PlayerDetails | undefined {
+  if (!/perks=|stats=|health=|traits=/.test(rest)) return undefined;
+  const stats = jsonOr<{ profession?: string; kills?: number; hours?: number }>(
+    STATS_RE,
+    rest,
+    {},
+  );
+  const health = jsonOr<{ health?: number; infected?: boolean }>(HEALTH_RE, rest, {});
+  return {
+    profession: stats.profession ?? null,
+    kills: typeof stats.kills === "number" ? stats.kills : null,
+    hours: typeof stats.hours === "number" ? stats.hours : null,
+    health: typeof health.health === "number" ? health.health : null,
+    infected: typeof health.infected === "boolean" ? health.infected : null,
+    perks: jsonOr<Record<string, number> | null>(PERKS_RE, rest, null),
+    traits: jsonOr<string[] | null>(TRAITS_RE, rest, null),
+  };
+}
 
 /** Convert a parsed `[DD-MM-YY HH:MM:SS.sss]` stamp to epoch milliseconds.
  *  Logs carry no timezone, so we interpret consistently as UTC — fine for
@@ -32,6 +74,35 @@ export function parseLine(line: string, category: Category): GameEvent | null {
   if (!ts) return null;
   const epoch = toEpoch(ts);
   const rest = ts[8] ?? "";
+
+  // PerkLog bracketed shape: "[steamid][name][x,y,z][<Event>][Hours Survived: N]."
+  // We only care about deaths here; login/skill-dump lines are dropped so they
+  // don't pollute the heatmap. A death folds into the player category so it's
+  // attributed to the player (and feeds the death-marker store).
+  const bracket = BRACKET_RE.exec(rest);
+  if (bracket) {
+    if (bracket[6] !== "Died") return null;
+    const hours = /Hours Survived:\s*([\d.]+)/.exec(rest);
+    return {
+      ts: epoch,
+      category: "player",
+      action: "died",
+      player: bracket[2] || null,
+      steamid: bracket[1] ?? null,
+      x: int(bracket[3]),
+      y: int(bracket[4]),
+      z: int(bracket[5]),
+      details: {
+        profession: null,
+        kills: null,
+        hours: hours ? Number(hours[1]) : null,
+        health: null,
+        infected: null,
+        perks: null,
+        traits: null,
+      },
+    };
+  }
 
   // PVP: "user <name> (x,y,z) <verb> user <name> (x,y,z) ..."
   const pvp = PVP_RE.exec(rest);
@@ -69,7 +140,7 @@ export function parseLine(line: string, category: Category): GameEvent | null {
   // and carries no useful structure for the heatmap — skip it.
   if (!actor && !coord) return null;
 
-  return {
+  const event: GameEvent = {
     ts: epoch,
     category,
     action,
@@ -79,4 +150,11 @@ export function parseLine(line: string, category: Category): GameEvent | null {
     y: coord ? int(coord[2]) : null,
     z: coord ? int(coord[3]) : null,
   };
+
+  // Attach per-player metrics for the live-player tracker (player logs only).
+  if (category === "player") {
+    const details = parsePlayerDetails(coordScope);
+    if (details) event.details = details;
+  }
+  return event;
 }

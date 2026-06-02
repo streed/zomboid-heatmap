@@ -58,6 +58,93 @@ describe("parseLine", () => {
   test("timestamped line with neither actor nor coords is skipped", () => {
     expect(parseLine("[10-05-26 12:00:00.000] server tick complete", "other")).toBeNull();
   });
+
+  test("strips a `[LEVEL]` tag emitted after the timestamp by newer builds", () => {
+    const e = parseLine(
+      `[02-06-26 03:35:11.174][INFO] 76561197979998632 "zeke" removed IsoObject (appliances_refrigeration_01_28) at 8209,11599,0.`,
+      "map",
+    );
+    expect(e).toMatchObject({ action: "removed", player: "zeke", x: 8209, y: 11599, z: 0 });
+  });
+
+  test("verbose player line keeps the trailing position, not numbers from the JSON", () => {
+    const e = parseLine(
+      `[02-06-26 03:20:56.785] 76561197976256598 "elchupa" tick perks={"Aiming":0,"Axe":5} ` +
+        `stats={"profession":"lumberjack","kills":11,"hours":6.76} ` +
+        `safehouse owner=(8116x11537 - 8146x11564) (8133,11567,0).`,
+      "player",
+    );
+    expect(e).toMatchObject({ action: "tick", player: "elchupa", x: 8133, y: 11567, z: 0 });
+  });
+
+  test("player connect line extracts metrics into `details`", () => {
+    const e = parseLine(
+      `[02-06-26 03:17:06.529] 76561197976256598 "elchupa" connected ` +
+        `perks={"Axe":5,"Strength":10} traits=["Fit","Strong"] ` +
+        `stats={"profession":"lumberjack","kills":2,"hours":6} ` +
+        `health={"health":100,"infected":false} ` +
+        `safehouse owner=(8116x11537 - 8146x11564) (8140,11549,1).`,
+      "player",
+    );
+    expect(e).toMatchObject({ action: "connected", x: 8140, y: 11549, z: 1 });
+    expect(e!.details).toEqual({
+      profession: "lumberjack",
+      kills: 2,
+      hours: 6,
+      health: 100,
+      infected: false,
+      perks: { Axe: 5, Strength: 10 },
+      traits: ["Fit", "Strong"],
+    });
+  });
+
+  test("map line carries no player `details`", () => {
+    const e = parseLine(
+      `[02-06-26 03:35:11.174] 76561197979998632 "zeke" removed IsoObject (x_1) at 8209,11599,0.`,
+      "map",
+    );
+    expect(e!.details).toBeUndefined();
+  });
+
+  test("coordinate-less `restore safety` pvp line is skipped", () => {
+    const e = parseLine(
+      `[02-06-26 03:17:04.126][INFO] user "elchupa" restore safety enabled=true last=true cooldown=0.0 toggle=0.0.`,
+      "pvp",
+    );
+    expect(e).toBeNull();
+  });
+
+  test("PerkLog [Died] line becomes a player death with hours survived", () => {
+    const e = parseLine(
+      `[02-06-26 03:22:46.291] [76561197976256598][elchupa][8188,11563,0][Died][Hours Survived: 7].`,
+      "player",
+    );
+    expect(e).toMatchObject({
+      category: "player",
+      action: "died",
+      steamid: "76561197976256598",
+      player: "elchupa",
+      x: 8188,
+      y: 11563,
+      z: 0,
+    });
+    expect(e!.details?.hours).toBe(7);
+  });
+
+  test("PerkLog [Login] / skill-dump lines are dropped (not deaths)", () => {
+    expect(
+      parseLine(
+        `[02-06-26 03:17:06.529] [76561197976256598][elchupa][8140,11549,1][Login][Hours Survived: 6].`,
+        "player",
+      ),
+    ).toBeNull();
+    expect(
+      parseLine(
+        `[02-06-26 03:17:06.529] [76561197976256598][elchupa][8140,11549,1][Cooking=0, Axe=5][Hours Survived: 6].`,
+        "player",
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("categoryFromFilename", () => {
@@ -69,9 +156,20 @@ describe("categoryFromFilename", () => {
     ["x_player.txt", "player"],
     ["x_admin.txt", "admin"],
     ["x_safehouse.txt", "safehouse"],
-    ["x_chat.txt", "other"],
-    ["25-05-27_DebugLog-server.txt", "other"],
+    ["x_PerkLog.txt", "player"], // deaths fold into player data
   ])("%s -> %s", (name, expected) => {
     expect(categoryFromFilename(name)).toBe(expected);
+  });
+
+  // Non-spatial / noisy logs are not ingested (null so scan skips them).
+  test.each([
+    ["x_chat.txt"],
+    ["25-05-27_DebugLog-server.txt"],
+    ["x_item.txt"],
+    ["x_craft.txt"],
+    ["x_user.txt"],
+    ["x_ClientActionLog.txt"],
+  ])("%s -> null (skipped)", (name) => {
+    expect(categoryFromFilename(name)).toBeNull();
   });
 });
