@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/cache/
 data/state.json
+data/players.db*
 .env
 *.log
 server/

@@ -58,6 +58,26 @@ describe("PlayerTracker", () => {
     expect(t.count()).toBe(1);
   });
 
+  test("kills accumulate across deaths/respawns (game resets per-life count)", () => {
+    const t = tracker();
+    const D = (kills: number) => ({
+      profession: null,
+      kills,
+      hours: null,
+      health: null,
+      infected: null,
+      perks: null,
+      traits: null,
+    });
+    t.update([
+      pev({ ts: T0 + 0, details: D(2) }),
+      pev({ ts: T0 + 1, details: D(11) }), // same life, +9
+      pev({ ts: T0 + 2, details: D(0) }), // respawned -> reset, no negative
+      pev({ ts: T0 + 3, details: D(3) }), // new life, +3
+    ]);
+    expect(t.list({ now: T0 + 100 })[0]!.kills).toBe(14); // 11 (life 1) + 3 (life 2)
+  });
+
   test("does not regress to an older out-of-order event", () => {
     const t = tracker();
     t.update([pev({ ts: T0 + 5000, x: 8010, y: 11010 })]);

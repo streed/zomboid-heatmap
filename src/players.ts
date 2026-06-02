@@ -72,6 +72,7 @@ export class PlayerTracker {
   private readonly upsertPlayer;
   private readonly upsertPoint;
   private readonly insertDeath;
+  private readonly getKills;
 
   constructor(
     dbPath: string,
@@ -96,6 +97,7 @@ export class PlayerTracker {
         last_action TEXT,
         profession  TEXT,
         kills       INTEGER,
+        kills_life  INTEGER,
         hours       REAL,
         health      INTEGER,
         infected    INTEGER,
@@ -105,6 +107,14 @@ export class PlayerTracker {
         last_seen   INTEGER NOT NULL
       )
     `);
+    // Migrate older DBs that predate cumulative-kills tracking. `kills` holds the
+    // running total across lives; `kills_life` the current character's last
+    // reported count (used to detect respawn resets).
+    try {
+      this.db.run("ALTER TABLE players ADD COLUMN kills_life INTEGER");
+    } catch {
+      /* column already exists */
+    }
     this.db.run(`
       CREATE TABLE IF NOT EXISTS player_points (
         steamid  TEXT NOT NULL,
@@ -142,11 +152,11 @@ export class PlayerTracker {
     this.upsertPlayer = this.db.query(`
       INSERT INTO players (
         steamid, name, x, y, z, online, last_action,
-        profession, kills, hours, health, infected, perks, traits,
+        profession, kills, kills_life, hours, health, infected, perks, traits,
         first_seen, last_seen
       ) VALUES (
         $steamid, $name, $x, $y, $z, $online, $action,
-        $profession, $kills, $hours, $health, $infected, $perks, $traits,
+        $profession, $kills, $kills_life, $hours, $health, $infected, $perks, $traits,
         $ts, $ts
       )
       ON CONFLICT(steamid) DO UPDATE SET
@@ -158,6 +168,7 @@ export class PlayerTracker {
         last_action = excluded.last_action,
         profession  = COALESCE(excluded.profession, players.profession),
         kills       = COALESCE(excluded.kills,      players.kills),
+        kills_life  = COALESCE(excluded.kills_life, players.kills_life),
         hours       = COALESCE(excluded.hours,      players.hours),
         health      = COALESCE(excluded.health,     players.health),
         infected    = COALESCE(excluded.infected,   players.infected),
@@ -166,6 +177,11 @@ export class PlayerTracker {
         last_seen   = excluded.last_seen
       WHERE excluded.last_seen >= players.last_seen
     `);
+
+    // Read current kill counters to fold a new report into the running total.
+    this.getKills = this.db.query(
+      "SELECT kills, kills_life FROM players WHERE steamid = $steamid",
+    );
 
     this.upsertPoint = this.db.query(`
       INSERT INTO player_points (steamid, category, bin_x, bin_y, day, weight)
@@ -191,6 +207,24 @@ export class PlayerTracker {
         // Latest position + metrics — player logs only.
         if (e.category === "player") {
           const d = e.details;
+
+          // Cumulative kills: the game resets a character's kill count to 0 on
+          // death/respawn, so we sum the increments across lives. A reported
+          // value below the current life's last count means a new character —
+          // count it from zero rather than treating the drop as negative.
+          let cumulative: number | null = null;
+          let killsLife: number | null = null;
+          if (d && typeof d.kills === "number") {
+            const prev = this.getKills.get({ $steamid: e.steamid }) as
+              | { kills: number | null; kills_life: number | null }
+              | null;
+            const prevTotal = prev?.kills ?? 0;
+            const prevLife = prev?.kills_life ?? 0;
+            const delta = d.kills >= prevLife ? d.kills - prevLife : d.kills;
+            cumulative = prevTotal + delta;
+            killsLife = d.kills;
+          }
+
           this.upsertPlayer.run({
             $steamid: e.steamid,
             $name: e.player,
@@ -200,7 +234,8 @@ export class PlayerTracker {
             $online: e.action === "disconnected" ? 0 : 1,
             $action: e.action,
             $profession: d?.profession ?? null,
-            $kills: d?.kills ?? null,
+            $kills: cumulative,
+            $kills_life: killsLife,
             $hours: d?.hours ?? null,
             $health: d?.health ?? null,
             $infected: d?.infected == null ? null : d.infected ? 1 : 0,
