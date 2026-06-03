@@ -1,54 +1,10 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Database } from "bun:sqlite";
+import { openDb } from "./db.ts";
 import type { DeathInfo, GameEvent, HeatPoint, PlayerInfo } from "./types.ts";
 
 /** UTC day key "YYYY-MM-DD" — matches the Aggregator's bucketing. */
 function dayKey(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
-}
-
-/**
- * Open the SQLite DB for read/write, self-healing a stale read-only file.
- *
- * If a `players.db` was created by a different user (e.g. running
- * `bun run backfill` as root while the service runs as another user), the
- * service can read but not write it and every write throws SQLITE_READONLY —
- * crash-looping the service. Since the *data directory* is writable (state.json
- * is written there), we can delete the unwritable file and recreate it; a
- * backfill repopulates the history. If the directory itself is read-only, the
- * recreate fails too and we surface the original error.
- */
-function openWritableDb(dbPath: string): Database {
-  const db = new Database(dbPath);
-  if (dbPath === ":memory:") return db;
-  // Probe write access without leaving any schema artifact: rewrite
-  // user_version to its own value. Throws SQLITE_READONLY if not writable.
-  const writeProbe = (d: Database) => {
-    const v = (d.query("PRAGMA user_version").get() as { user_version: number }).user_version;
-    d.run(`PRAGMA user_version = ${v}`);
-  };
-  try {
-    writeProbe(db);
-    return db;
-  } catch (err) {
-    if ((err as { code?: string }).code !== "SQLITE_READONLY") throw err;
-    db.close();
-    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-      try {
-        rmSync(dbPath + suffix);
-      } catch {
-        /* file may not exist */
-      }
-    }
-    console.warn(
-      `players.db was read-only (likely created by another user, e.g. ` +
-        `\`bun run backfill\` as root) — recreated it. Re-run backfill to restore history.`,
-    );
-    const fresh = new Database(dbPath);
-    writeProbe(fresh); // if this still fails the data dir itself is read-only
-    return fresh;
-  }
 }
 
 /**
@@ -75,17 +31,15 @@ export class PlayerTracker {
   private readonly getKills;
 
   constructor(
-    dbPath: string,
+    /** A shared {@link Database} (preferred — see index.ts) or a path to open. */
+    db: Database | string,
     /** Staleness window: online players must have been seen within this long of
      *  the current (wall-clock) time. */
     private readonly staleMs = 30 * 60_000,
     /** Tile bin size for the per-player heatmap (mirrors the aggregator). */
     private readonly binSize = 10,
   ) {
-    if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
-    // Default rollback journal (no WAL) — single process, and it avoids stray
-    // -wal/-shm files that compound cross-user permission problems.
-    this.db = openWritableDb(dbPath);
+    this.db = typeof db === "string" ? openDb(db) : db;
     this.db.run(`
       CREATE TABLE IF NOT EXISTS players (
         steamid     TEXT PRIMARY KEY,

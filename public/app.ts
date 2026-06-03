@@ -32,6 +32,7 @@ const dayEndMs = (day: string) => Date.parse(`${day}T23:59:59.999Z`);
 
 const POLL_MS = 30_000;
 const PLAYER_POLL_MS = 15_000; // live positions update faster than the heatmap
+const ANIM_FRAME_MS = 700; // dwell time per day while the time range animates
 const el = (id: string) => document.getElementById(id)!;
 
 let meta: MapMeta;
@@ -48,6 +49,8 @@ let timeInit = false;
 let playerLayer: L.LayerGroup;
 const playerMarkers = new Map<string, L.CircleMarker>();
 let showPlayers = true;
+/** Active time-range animation; cleared (and timer stopped) when not playing. */
+let animTimer: ReturnType<typeof setTimeout> | null = null;
 /** When set to a steamid, the heatmap shows only that player's activity. */
 let playerFilter = "";
 /** Death markers, shown only while filtered to a specific player. */
@@ -92,7 +95,7 @@ function parseSharedView(): { center: L.LatLng; zoom: number } | null {
 /**
  * Write the full UI state to the URL (replacing history, not stacking) so the
  * link captures exactly what's on screen: view, categories, time range,
- * intensity radius, player filter and the live-players toggle.
+ * player filter and the live-players toggle.
  */
 function syncUrl(): void {
   const p = new URLSearchParams();
@@ -109,7 +112,6 @@ function syncUrl(): void {
     p.set("to", range.to);
   }
 
-  p.set("radius", (el("radius") as HTMLInputElement).value);
   if (playerFilter) p.set("player", playerFilter);
   if (!showPlayers) p.set("players", "0");
 
@@ -410,21 +412,60 @@ function buildTimeControls(): void {
   };
   // Assign (not addEventListener) so re-running on a meta-refresh replaces the
   // handler instead of stacking duplicates on these persistent inputs.
-  start.oninput = () => update(true);
-  end.oninput = () => update(true);
+  // Dragging either slider by hand cancels any running animation.
+  start.oninput = () => {
+    stopAnim();
+    update(true);
+  };
+  end.oninput = () => {
+    stopAnim();
+    update(true);
+  };
   update(false);
 }
 
-function buildRadiusControl(): void {
-  const slider = el("radius") as HTMLInputElement;
-  const initial = params.get("radius");
-  if (initial) slider.value = initial;
-  const apply = (fromUser: boolean) => {
-    heat.setOptions({ radius: +slider.value, blur: +slider.value * 0.75 });
-    if (fromUser) syncUrl();
+/** Stop a running time-range animation and reset the play button. */
+function stopAnim(): void {
+  if (animTimer !== null) {
+    clearTimeout(animTimer);
+    animTimer = null;
+  }
+  const btn = el("time-play") as HTMLButtonElement;
+  btn.textContent = "▶ Play";
+  btn.classList.remove("playing");
+}
+
+/**
+ * Sweep the end of the time range from the first day up to the latest day,
+ * refreshing the heatmap one day at a time so the map plays through the
+ * server's history, accumulating each day's activity. The start day is reset to
+ * the beginning of the timeframe.
+ */
+function playAnim(): void {
+  if (days.length === 0) return;
+  stopAnim();
+  const start = el("time-start") as HTMLInputElement;
+  const end = el("time-end") as HTMLInputElement;
+  const lo = 0; // animation always starts from the beginning of the timeframe
+  start.value = String(lo);
+  const btn = el("time-play") as HTMLButtonElement;
+  btn.textContent = "⏸ Stop";
+  btn.classList.add("playing");
+
+  let cur = lo;
+  const tick = async () => {
+    end.value = String(cur);
+    el("time-label").textContent = `${days[lo]} → ${days[cur]}`;
+    await refreshHeat();
+    syncUrl();
+    if (cur >= days.length - 1) {
+      stopAnim();
+      return;
+    }
+    cur++;
+    animTimer = setTimeout(() => void tick(), ANIM_FRAME_MS);
   };
-  slider.addEventListener("input", () => apply(true));
-  apply(false);
+  void tick();
 }
 
 // ---- Bootstrap -------------------------------------------------------------
@@ -446,7 +487,8 @@ async function main(): Promise<void> {
   map.setMaxBounds(bounds);
   map.fitBounds(bounds);
 
-  heat = L.heatLayer([], { radius: 25, blur: 18, minOpacity: 0.25, maxZoom: meta.maxLevel });
+  // Intensity radius is fixed at the max (no user control); blur tracks it.
+  heat = L.heatLayer([], { radius: 60, blur: 45, minOpacity: 0.25, maxZoom: meta.maxLevel });
   heat.addTo(map);
 
   playerLayer = L.layerGroup().addTo(map);
@@ -454,8 +496,12 @@ async function main(): Promise<void> {
 
   buildCategoryControls();
   buildTimeControls();
-  buildRadiusControl();
   el("collapse").addEventListener("click", () => el("panel").classList.toggle("collapsed"));
+
+  // Play/stop the time-range animation.
+  el("time-play").addEventListener("click", () => {
+    animTimer !== null ? stopAnim() : playAnim();
+  });
 
   // Live-player toggle: add/remove the marker layer.
   const playersCb = el("show-players") as HTMLInputElement;

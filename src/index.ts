@@ -1,19 +1,11 @@
-import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
 import { Aggregator } from "./aggregate.ts";
 import { config } from "./config.ts";
+import { openDb } from "./db.ts";
 import { scanLogs, type FileOffsets } from "./parser/scan.ts";
 import { PlayerTracker } from "./players.ts";
 import { createServer, type ServerState } from "./server.ts";
+import { StateStore } from "./state.ts";
 import { TileProxy } from "./tiles.ts";
-import type { HeatmapData } from "./types.ts";
-
-interface PersistedState {
-  offsets: FileOffsets;
-  aggregate: HeatmapData;
-  counts: Record<string, number>;
-  lastUpdated: number;
-}
 
 // Backfill: ignore any saved offsets/aggregate and re-ingest every log file
 // from the beginning, rebuilding the heatmap from scratch. Triggered by
@@ -24,42 +16,33 @@ const backfill =
   process.argv.includes("--backfill") ||
   ["1", "true", "yes"].includes((process.env.BACKFILL ?? "").toLowerCase());
 
+// One SQLite DB now holds everything: player tracking, scan offsets, and the
+// heatmap aggregate (which used to live in data/state.json). Open it once and
+// share the handle so there's a single writer and no cross-connection locking.
+const db = openDb(config.dbFile);
+const store = new StateStore(db, config.binSize);
 const aggregator = new Aggregator(config.binSize);
-const players = new PlayerTracker(config.dbFile, config.playerStaleMs, config.binSize);
+const players = new PlayerTracker(db, config.playerStaleMs, config.binSize);
 const tiles = new TileProxy(config.tileUpstream, config.mapDesc, config.descriptor, config.cacheDir);
 const state: ServerState = { lastUpdated: 0 };
 let offsets: FileOffsets = {};
 
-// Restore prior aggregate + read offsets so a restart resumes where it left off.
-// If the bin size changed, the persisted aggregate is incompatible — drop it and
-// re-scan all logs from the start. Backfill skips restore entirely.
+// Restore prior aggregate + offsets so a restart resumes where it left off.
+// (StateStore drops incompatible bins itself if BIN_SIZE changed.) Backfill
+// skips restore entirely and wipes the persisted state for a clean re-scan.
 if (backfill) {
   console.log("BACKFILL requested — re-scanning all logs from the start.");
+  store.reset();
   players.reset(); // rebuild the player table from scratch alongside the aggregate
-} else if (existsSync(config.stateFile)) {
-  try {
-    const p = JSON.parse(await Bun.file(config.stateFile).text()) as PersistedState;
-    if (p.aggregate?.binSize === config.binSize) {
-      aggregator.load(p.aggregate, p.counts);
-      offsets = p.offsets ?? {};
-      state.lastUpdated = p.lastUpdated ?? 0;
-    } else {
-      console.warn("BIN_SIZE changed since last run — rebuilding aggregate from scratch.");
-    }
-  } catch (err) {
-    console.warn(`Could not read state file, starting fresh: ${err}`);
-  }
+} else {
+  const restored = store.loadAggregate();
+  aggregator.load(restored.data, restored.counts);
+  offsets = store.loadOffsets();
+  state.lastUpdated = store.lastUpdated();
 }
 
-async function persist(): Promise<void> {
-  await mkdir(config.dataDir, { recursive: true });
-  const data: PersistedState = {
-    offsets,
-    aggregate: aggregator.toData(),
-    counts: aggregator.categoryCounts(),
-    lastUpdated: state.lastUpdated,
-  };
-  await Bun.write(config.stateFile, JSON.stringify(data));
+function persist(): void {
+  store.save(offsets, aggregator.toData(), aggregator.categoryCounts(), state.lastUpdated);
 }
 
 async function refresh(): Promise<void> {
@@ -71,7 +54,7 @@ async function refresh(): Promise<void> {
     }
     offsets = result.offsets;
     state.lastUpdated = Date.now();
-    await persist();
+    persist();
     if (result.events.length) {
       console.log(`[${new Date().toISOString()}] +${result.events.length} events`);
     }
@@ -87,7 +70,7 @@ await refresh(); // initial scan before accepting requests
 // collide with the running service). Restart the service to load the new state.
 if (backfill) {
   console.log(
-    `Backfill complete — rebuilt ${config.stateFile} and ${config.dbFile} ` +
+    `Backfill complete — rebuilt ${config.dbFile} ` +
       `(${players.count()} players). ` +
       `Restart the service to load it (e.g. systemctl restart zomboid-heatmap).`,
   );

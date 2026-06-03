@@ -84,7 +84,15 @@ export function createServer(deps: ServerDeps) {
     hostname: config.hostname,
     port: config.port,
     async fetch(req): Promise<Response> {
-      const url = new URL(req.url);
+      // Bots probing with a malformed/missing Host header send a *relative*
+      // request target (e.g. "/boaform/..."), which `new URL()` rejects. Supply
+      // a base so parsing always succeeds — we only read pathname/searchParams.
+      let url: URL;
+      try {
+        url = new URL(req.url, "http://localhost");
+      } catch {
+        return new Response("Bad request", { status: 400, headers: baseHeaders });
+      }
       const path = url.pathname;
 
       // Static assets.

@@ -13,18 +13,24 @@ export interface ScanResult {
 }
 
 /** Recursively collect `*.txt` log files under `dir` (handles dated subfolders). */
-async function findLogFiles(dir: string): Promise<string[]> {
+async function findLogFiles(dir: string, isRoot = true): Promise<string[]> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return []; // dir missing or unreadable — treated as "no logs yet"
+  } catch (err) {
+    // The configured logs root failing to read is a real misconfiguration — a
+    // wrong path, or a sandbox (e.g. systemd ProtectHome) hiding the directory.
+    // Throw so the caller's refresh logs "Refresh failed" AND keeps its prior
+    // offsets, instead of silently treating it as "no logs" and overwriting the
+    // saved offsets with `{}`. A nested subdir that's unreadable is tolerated.
+    if (isRoot) throw err;
+    return [];
   }
   const files: string[] = [];
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await findLogFiles(full)));
+      files.push(...(await findLogFiles(full, false)));
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
       files.push(full);
     }

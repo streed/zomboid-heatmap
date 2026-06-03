@@ -132,6 +132,34 @@ input[type="range"] {
   margin: 4px 0;
 }
 
+/* Time range: label on the left, play/stop button on the right. */
+.time-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#time-play {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+#time-play:hover {
+  background: #1b2531;
+  border-color: var(--accent);
+}
+#time-play.playing {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Live players panel: a toggle in the heading + a compact roster. */
 .players-toggle {
   display: flex;

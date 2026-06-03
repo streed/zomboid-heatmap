@@ -66,8 +66,7 @@ export const config = {
 
   dataDir,
   cacheDir: resolve(dataDir, "cache", "tiles"),
-  stateFile: resolve(dataDir, "state.json"),
-  /** SQLite database holding per-player metrics + latest known position. */
+  /** SQLite DB: per-player metrics, scan offsets, and the heatmap aggregate. */
   dbFile: resolve(dataDir, "players.db"),
 
   /** A player drops off the live map this long (wall-clock) after their last
