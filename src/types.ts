@@ -72,6 +72,21 @@ export interface DeathInfo {
   hours: number | null;
 }
 
+/** One timestamped position sample in a player's movement trail. */
+export interface PathPoint {
+  /** Epoch ms of the sample. */
+  ts: number;
+  x: number;
+  y: number;
+}
+
+/** A player's ordered movement trail (oldest → newest). */
+export interface PlayerPath {
+  steamid: string;
+  name: string | null;
+  points: PathPoint[];
+}
+
 /** A weighted point for the heatmap, in game world tile coordinates. */
 export interface HeatPoint {
   x: number;

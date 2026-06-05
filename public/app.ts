@@ -1,6 +1,6 @@
 import L from "leaflet";
 import "leaflet.heat";
-import type { DeathInfo, HeatPoint, MapMeta, PlayerInfo } from "../src/types.ts";
+import type { DeathInfo, HeatPoint, MapMeta, PlayerInfo, PlayerPath } from "../src/types.ts";
 import { createDziLayer } from "./dzi-tilelayer.ts";
 
 // ---- Helpers ---------------------------------------------------------------
@@ -55,6 +55,9 @@ let animTimer: ReturnType<typeof setTimeout> | null = null;
 let playerFilter = "";
 /** Death markers, shown only while filtered to a specific player. */
 let deathLayer: L.LayerGroup;
+/** Player movement-trail polylines; toggled by the "Show movement paths" box. */
+let pathLayer: L.LayerGroup;
+let showPaths = false;
 
 /** Project a game tile (x, y) to a full-resolution image pixel. Mirrors the
  *  community map's tileToPixel for `iso`, or a linear scale for `ortho`. */
@@ -114,6 +117,7 @@ function syncUrl(): void {
 
   if (playerFilter) p.set("player", playerFilter);
   if (!showPlayers) p.set("players", "0");
+  if (showPaths) p.set("paths", "1");
 
   // Commas are valid in a query value; keep them unescaped for readable URLs.
   history.replaceState(null, "", `${location.pathname}?${p.toString().replace(/%2C/g, ",")}`);
@@ -276,6 +280,67 @@ async function refreshDeaths(): Promise<void> {
     L.marker(gameToLatLng(d.x, d.y), { icon: DEATH_ICON })
       .bindTooltip(`Died ${when} UTC${survived}`, { direction: "top", offset: [0, -8] })
       .addTo(deathLayer);
+  }
+}
+
+// Distinct, stable hue per player so overlapping trails stay distinguishable.
+const PATH_COLORS = [
+  "#3584e4", "#33d17a", "#f6d32d", "#ff7800", "#e01b24",
+  "#c061cb", "#1abc9c", "#ed64a6", "#9141ac", "#62a0ea",
+];
+
+/** Deterministic color for a steamid (so a player keeps the same trail color). */
+function pathColor(steamid: string): string {
+  let h = 0;
+  for (let i = 0; i < steamid.length; i++) h = (h * 31 + steamid.charCodeAt(i)) >>> 0;
+  return PATH_COLORS[h % PATH_COLORS.length]!;
+}
+
+/**
+ * Draw player movement trails. With a player filter active, the server returns
+ * that player's full history; otherwise it returns every player's positions
+ * over the past day. Each trail is a polyline with start/end markers.
+ */
+async function refreshPaths(): Promise<void> {
+  pathLayer.clearLayers();
+  const hint = el("paths-hint");
+  if (!showPaths) {
+    hint.textContent = "";
+    return;
+  }
+  hint.textContent = playerFilter ? "full history for this player" : "all players, past day";
+
+  const q = new URLSearchParams();
+  if (playerFilter) q.set("player", playerFilter);
+
+  let paths: PlayerPath[];
+  try {
+    ({ paths } = await getJSON<{ paths: PlayerPath[] }>(`api/paths?${q}`));
+  } catch {
+    return; // transient; keep prior trails and retry next tick
+  }
+  if (!showPaths) return; // toggled off while fetching
+
+  for (const path of paths) {
+    if (path.points.length < 1) continue;
+    const color = pathColor(path.steamid);
+    const latlngs = path.points.map((pt) => gameToLatLng(pt.x, pt.y));
+    if (latlngs.length >= 2) {
+      L.polyline(latlngs, { color, weight: 3, opacity: 0.75 })
+        .bindTooltip(escapeHtml(path.name ?? path.steamid), { sticky: true })
+        .addTo(pathLayer);
+    }
+    // Mark the most recent position so the trail's direction is readable.
+    const last = latlngs[latlngs.length - 1]!;
+    L.circleMarker(last, {
+      radius: 4,
+      color: "#fff",
+      weight: 1,
+      fillColor: color,
+      fillOpacity: 0.95,
+    })
+      .bindTooltip(escapeHtml(path.name ?? path.steamid), { direction: "top", offset: [0, -4] })
+      .addTo(pathLayer);
   }
 }
 
@@ -493,6 +558,7 @@ async function main(): Promise<void> {
 
   playerLayer = L.layerGroup().addTo(map);
   deathLayer = L.layerGroup().addTo(map);
+  pathLayer = L.layerGroup().addTo(map);
 
   buildCategoryControls();
   buildTimeControls();
@@ -519,6 +585,16 @@ async function main(): Promise<void> {
     syncUrl();
   });
 
+  // Movement-paths toggle: draw/clear the trail layer.
+  const pathsCb = el("show-paths") as HTMLInputElement;
+  showPaths = params.get("paths") === "1";
+  pathsCb.checked = showPaths;
+  pathsCb.addEventListener("change", () => {
+    showPaths = pathsCb.checked;
+    void refreshPaths();
+    syncUrl();
+  });
+
   // Player heatmap filter.
   playerFilter = params.get("player") ?? "";
   const playerSel = el("player-filter") as HTMLSelectElement;
@@ -527,6 +603,7 @@ async function main(): Promise<void> {
     syncUrl();
     void refreshHeat();
     void refreshDeaths();
+    void refreshPaths(); // path scope depends on whether a player is selected
   });
 
   // Restore a shared view (?center=x,y in game tiles & ?zoom=N) if present; else
@@ -551,8 +628,11 @@ async function main(): Promise<void> {
 
   // Live players: initial pull + its own faster poll.
   if (showPlayers) await refreshPlayers();
+  // Movement paths: initial draw, then refresh alongside live positions.
+  if (showPaths) void refreshPaths();
   setInterval(() => {
     if (showPlayers) void refreshPlayers();
+    if (showPaths) void refreshPaths();
   }, PLAYER_POLL_MS);
 
   // Auto-refresh: re-pull meta; if the server processed new logs, reload data.
