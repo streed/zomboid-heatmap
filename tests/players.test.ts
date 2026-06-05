@@ -160,6 +160,65 @@ describe("PlayerTracker", () => {
     });
   });
 
+  describe("movement paths", () => {
+    test("single player returns their full ordered history", () => {
+      const t = tracker();
+      const hr = 60 * 60_000;
+      t.update([
+        pev({ steamid: "a", ts: T0 + 2 * hr, x: 30, y: 30 }), // inserted out of order
+        pev({ steamid: "a", ts: T0, x: 10, y: 10 }),
+        pev({ steamid: "a", ts: T0 + hr, x: 20, y: 20 }),
+        pev({ steamid: "b", ts: T0, x: 99, y: 99 }),
+      ]);
+
+      const paths = t.paths({ player: "a" });
+      expect(paths).toHaveLength(1);
+      expect(paths[0]).toMatchObject({ steamid: "a", name: "alice" });
+      // Oldest → newest regardless of insertion order, full history (no window).
+      expect(paths[0]!.points.map((p) => p.x)).toEqual([10, 20, 30]);
+    });
+
+    test("all players are limited to the past day of recorded positions", () => {
+      const t = tracker();
+      const day = 24 * 60 * 60_000;
+      t.update([
+        pev({ steamid: "a", ts: T0, x: 1, y: 1 }), // 2 days before latest -> dropped
+        pev({ steamid: "a", ts: T0 + 2 * day - 1000, x: 2, y: 2 }), // within window
+        pev({ steamid: "b", ts: T0 + 2 * day, x: 3, y: 3 }), // latest -> sets window end
+      ]);
+
+      const paths = t.paths();
+      const byId = Object.fromEntries(paths.map((p) => [p.steamid, p.points]));
+      expect(byId.a!.map((p) => p.x)).toEqual([2]); // the >1-day-old point is gone
+      expect(byId.b!.map((p) => p.x)).toEqual([3]);
+    });
+
+    test("only player-log positions are recorded (action logs excluded)", () => {
+      const t = tracker();
+      t.update([
+        pev({ steamid: "a", ts: T0, x: 10, y: 10 }), // player log -> tracked
+        pev({ steamid: "a", ts: T0 + 1000, x: 20, y: 20, category: "cmd" }), // ignored
+      ]);
+      expect(t.paths({ player: "a" })[0]!.points.map((p) => p.x)).toEqual([10]);
+    });
+
+    test("re-applying the same positions is idempotent (backfill safe)", () => {
+      const t = tracker();
+      const ev = pev({ steamid: "a", ts: T0, x: 10, y: 10 });
+      t.update([ev]);
+      t.update([ev]); // duplicate (steamid, ts) -> ignored
+      expect(t.paths({ player: "a" })[0]!.points).toHaveLength(1);
+    });
+
+    test("reset() clears positions", () => {
+      const t = tracker();
+      t.update([pev({ steamid: "a", ts: T0, x: 1, y: 2 })]);
+      expect(t.paths({ player: "a" })).toHaveLength(1);
+      t.reset();
+      expect(t.paths({ player: "a" })).toHaveLength(0);
+    });
+  });
+
   describe("deaths", () => {
     const death = (over: Partial<GameEvent>) =>
       pev({

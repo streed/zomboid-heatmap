@@ -1,11 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { openDb } from "./db.ts";
-import type { DeathInfo, GameEvent, HeatPoint, PlayerInfo } from "./types.ts";
+import type { DeathInfo, GameEvent, HeatPoint, PlayerInfo, PlayerPath } from "./types.ts";
 
 /** UTC day key "YYYY-MM-DD" — matches the Aggregator's bucketing. */
 function dayKey(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
+
+/** One day in milliseconds — the default window for the all-players path view. */
+const DAY_MS = 24 * 60 * 60_000;
 
 /**
  * Tracks each player's latest known position + metrics, and a per-player binned
@@ -16,6 +19,7 @@ function dayKey(ts: number): string {
  * has one player been". This keeps:
  *   - `players`        : one row per steamid (latest position + metrics)
  *   - `player_points`  : per-player binned position counts (category + day)
+ *   - `player_positions`: raw timestamped positions, for movement paths/trails
  *
  * Metric updates are idempotent and order-insensitive (a row only moves forward
  * for an event at least as recent as what's stored). Point counts are additive,
@@ -27,6 +31,7 @@ export class PlayerTracker {
   private readonly db: Database;
   private readonly upsertPlayer;
   private readonly upsertPoint;
+  private readonly insertPosition;
   private readonly insertDeath;
   private readonly getKills;
 
@@ -92,6 +97,23 @@ export class PlayerTracker {
         PRIMARY KEY (steamid, ts)
       )
     `);
+    // Raw, timestamped positions kept in arrival order so we can draw each
+    // player's movement trail (the binned `player_points` deliberately discards
+    // ordering and exact coordinates). Keyed by (steamid, ts) so re-scanning a
+    // log — e.g. a backfill — is idempotent. Unlike the binned tables this is
+    // independent of binSize, so it survives a BIN_SIZE change untouched.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_positions (
+        steamid TEXT NOT NULL,
+        ts      INTEGER NOT NULL,
+        x       INTEGER NOT NULL,
+        y       INTEGER NOT NULL,
+        z       INTEGER,
+        PRIMARY KEY (steamid, ts)
+      )
+    `);
+    // Index the all-players "past day" path query (latest-N positions by time).
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_positions_ts ON player_positions (ts)");
 
     // The binned points are tied to binSize; if it changed since last run the
     // old bins are incompatible, so drop them (a re-scan/backfill repopulates).
@@ -142,6 +164,13 @@ export class PlayerTracker {
       VALUES ($steamid, $category, $bx, $by, $day, 1)
       ON CONFLICT(steamid, category, bin_x, bin_y, day)
       DO UPDATE SET weight = weight + 1
+    `);
+
+    // One position sample per (steamid, ts); a re-scan re-applies the same rows
+    // harmlessly. We keep the first seen for a given timestamp.
+    this.insertPosition = this.db.query(`
+      INSERT OR IGNORE INTO player_positions (steamid, ts, x, y, z)
+      VALUES ($steamid, $ts, $x, $y, $z)
     `);
 
     // Deaths are discrete events keyed by (steamid, ts), so re-scanning the same
@@ -197,6 +226,19 @@ export class PlayerTracker {
             $traits: d?.traits ? JSON.stringify(d.traits) : null,
             $ts: e.ts,
           });
+
+          // Record the raw position over time so we can draw movement trails.
+          // Sourced from the player log only (its connect/tick lines are
+          // periodic position samples) — action logs would muddy the path.
+          if (e.x !== null && e.y !== null) {
+            this.insertPosition.run({
+              $steamid: e.steamid,
+              $ts: e.ts,
+              $x: e.x,
+              $y: e.y,
+              $z: e.z,
+            });
+          }
         }
 
         // Per-player binned activity across all categories (for filtering).
@@ -231,6 +273,7 @@ export class PlayerTracker {
   reset(): void {
     this.db.run("DELETE FROM players");
     this.db.run("DELETE FROM player_points");
+    this.db.run("DELETE FROM player_positions");
     this.db.run("DELETE FROM player_deaths");
   }
 
@@ -279,6 +322,69 @@ export class PlayerTracker {
     return (this.db.query(sql).all(params) as { bin_x: number; bin_y: number; w: number }[]).map(
       (r) => ({ x: r.bin_x * this.binSize + half, y: r.bin_y * this.binSize + half, weight: r.w }),
     );
+  }
+
+  /**
+   * Ordered movement trails (oldest → newest position per player).
+   *
+   * - With `player` (steamid): that player's *entire* recorded history.
+   * - Without: every player's positions, restricted to the **past day** — by
+   *   default the 24h leading up to the most recent recorded position (so it
+   *   degrades gracefully on historical/example logs as well as live servers).
+   *
+   * An explicit `from`/`to` (inclusive epoch-ms) overrides the default window.
+   */
+  paths(opts: { player?: string; from?: number; to?: number } = {}): PlayerPath[] {
+    const params: Record<string, string | number> = {};
+    const where: string[] = [];
+    if (opts.player) {
+      where.push("pp.steamid = $player");
+      params.$player = opts.player;
+    }
+
+    let from = opts.from;
+    const to = opts.to;
+    // All-players view defaults to the past day; a single player gets it all.
+    if (!opts.player && from === undefined && to === undefined) {
+      const latest = (
+        this.db.query("SELECT MAX(ts) AS m FROM player_positions").get() as { m: number | null }
+      ).m;
+      if (latest !== null) from = latest - DAY_MS;
+    }
+    if (from !== undefined) {
+      where.push("pp.ts >= $from");
+      params.$from = from;
+    }
+    if (to !== undefined) {
+      where.push("pp.ts <= $to");
+      params.$to = to;
+    }
+
+    const sql =
+      "SELECT pp.steamid AS steamid, p.name AS name, pp.ts AS ts, pp.x AS x, pp.y AS y " +
+      "FROM player_positions pp LEFT JOIN players p ON p.steamid = pp.steamid" +
+      (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
+      " ORDER BY pp.steamid, pp.ts";
+
+    const rows = this.db.query(sql).all(params) as {
+      steamid: string;
+      name: string | null;
+      ts: number;
+      x: number;
+      y: number;
+    }[];
+
+    // Group the flat, steamid-then-ts ordered rows into one trail per player.
+    const paths: PlayerPath[] = [];
+    let current: PlayerPath | null = null;
+    for (const r of rows) {
+      if (!current || current.steamid !== r.steamid) {
+        current = { steamid: r.steamid, name: r.name, points: [] };
+        paths.push(current);
+      }
+      current.points.push({ ts: r.ts, x: r.x, y: r.y });
+    }
+    return paths;
   }
 
   /**

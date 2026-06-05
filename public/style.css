@@ -172,6 +172,14 @@ input[type="range"] {
 .players-toggle input {
   accent-color: var(--accent);
 }
+/* Secondary toggle (movement paths) sits a touch in from the section heading. */
+.paths-toggle {
+  margin: 6px 0 2px;
+  font-size: 13px;
+}
+#paths-hint {
+  margin-bottom: 6px;
+}
 .player-filter {
   width: 100%;
   background: #161c25;

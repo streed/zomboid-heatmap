@@ -169,6 +169,24 @@ export function createServer(deps: ServerDeps) {
         );
       }
 
+      // Player movement paths. With `?player=<steamid>` returns that player's
+      // entire history; otherwise every player's positions over the past day.
+      if (path === "/api/paths") {
+        const player = url.searchParams.get("player") ?? undefined;
+        const fromRaw = url.searchParams.get("from");
+        const toRaw = url.searchParams.get("to");
+        return json(
+          {
+            paths: players.paths({
+              player,
+              from: fromRaw ? Number(fromRaw) : undefined,
+              to: toRaw ? Number(toRaw) : undefined,
+            }),
+          },
+          { ...baseHeaders, "cache-control": "no-cache" },
+        );
+      }
+
       // DZI tiles + descriptor, proxied & cached.
       if (path.startsWith("/tiles/")) {
         const rel = decodeURIComponent(path.slice("/tiles/".length));

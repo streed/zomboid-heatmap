@@ -233,7 +233,12 @@ used instead with `PROJECTION=ortho` (linear `px = x · pixelsPerTile`).
 
 - `GET /api/meta` → map dimensions, tile URL template, projection, available categories, event time range.
 - `GET /api/heatmap?cat=pvp,map&from=<ms>&to=<ms>` → `{ binSize, points: [{x,y,weight}] }` (game-tile coords).
+- `GET /api/paths?player=<steamid>` → `{ paths: [{ steamid, name, points: [{ts,x,y}] }] }`, each trail ordered oldest → newest. With a `player`, that player's **entire** history; without one, **every** player's positions over the **past day** (the 24h up to the most recent recorded position). An explicit `from`/`to` (epoch-ms) overrides the default window.
 - `GET /tiles/<path>` → proxied + cached DZI tile/descriptor.
+
+Player positions are sampled from the `_player.txt` connect/tick lines and stored
+over time in the SQLite DB (`player_positions`). The frontend's **Show movement
+paths** toggle draws them as per-player polylines.
 
 ---
 
